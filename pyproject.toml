@@ -3,9 +3,9 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "clv-prediction"
+name = "customer-ltv-and-retention-intelligence"
 version = "0.1.0"
-description = "Customer Lifetime Value Prediction System"
+description = "Customer retention intelligence API for CLV, churn risk, RFM segmentation, and campaign ROI"
 authors = [
     {name = "Helen Soremekun", email = "your.email@example.com"}
 ]
