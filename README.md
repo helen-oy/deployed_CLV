@@ -60,15 +60,15 @@ CLV, inactivity risk, RFM health, and retention economics:
 - `POST /business/campaign-roi`: campaign economics using margin rate, offer
   cost, expected uplift, and either selected customers or top priority customers.
 
-By default, the API now loads saved artifacts and the champion LightGBM model
-on startup rather than rerunning the full training pipeline. To force a full
-pipeline run at startup, set:
+For FastAPI Cloud, the API runs in artifact-only mode. It reads the saved CSV
+and JSON files in `models/` and does not import the training pipeline or
+LightGBM at startup. This avoids native runtime dependencies such as OpenMP
+`libgomp` that are needed only for live model inference/training.
 
-```bash
-CLV_API_RUN_PIPELINE_ON_STARTUP=true
-```
-
-The `POST /predict/clv` endpoint uses the fitted LightGBM models by default.
+The `POST /predict/clv` endpoint returns saved LightGBM predictions for
+customers present in `models/lightgbm_predictions.csv`. Live inference for new
+customers is disabled in the cloud API; regenerate the artifacts locally when
+you need to refresh predictions.
 LightGBM is trained with a snapshot-based target design:
 
 - Features are built from customer behavior in the 90 days before `calibration_end`.
@@ -85,37 +85,23 @@ LightGBM is trained with a snapshot-based target design:
   diversity, tenure, and trend ratios.
 - Each new LightGBM challenger is logged to local MLflow under `mlruns/` and
   saved under `models/lightgbm_registry/runs/<model_version>/`.
-- The API prefers `models/lightgbm_registry/champion/` on startup. Set
-  `force_train_lightgbm_challenger: true` in `config.yaml` to train and compare
-  a new challenger.
+- After local training, export refreshed serving artifacts before redeploying.
 
-You can compare it with the BG/NBD + Gamma-Gamma baseline by setting
-`model_type` to `baseline` or `both`.
-
-For customers already present in the training data, send the `customer_id` and
-the API will use the fitted customer features from the pipeline. For a new
-customer, also provide `customer_age`, which is the customer's age in days
-(`T` in the lifetimes model).
+The cloud API accepts `model_type: "lightgbm"` only. The `baseline` and `both`
+options require the full local modeling environment and are intentionally not
+available in artifact-only deployment.
 
 Example:
 
 ```json
 {
-  "model_type": "both",
+  "model_type": "lightgbm",
   "customers": [
     {
-      "customer_id": "17850",
+      "customer_id": "12347",
       "recency": 30,
       "frequency": 50,
       "monetary": 4000
-    },
-    {
-      "customer_id": "new-001",
-      "frequency": 3,
-      "recency": 90,
-      "customer_age": 180,
-      "monetary": 250,
-      "monetary_value": 250
     }
   ]
 }

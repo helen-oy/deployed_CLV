@@ -3,15 +3,13 @@ FastAPI application for CLV prediction and recommendation service.
 """
 
 import ast
-import os
+import json
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from typing import Any, Dict, List, Literal, Optional
 import pandas as pd
 import logging
 from pathlib import Path
-
-from .clv_pipeline import CLVPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -21,20 +19,115 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Global pipeline instance (loaded on startup)
-pipeline = None
 BASE_DIR = Path(__file__).parent.parent
 MODELS_DIR = BASE_DIR / "models"
 RFM_SEGMENT_SUMMARY_PATH = MODELS_DIR / "current_state_segment_summary.csv"
 LIGHTGBM_PREDICTIONS_PATH = MODELS_DIR / "lightgbm_predictions.csv"
 CUSTOMER_RECOMMENDATIONS_PATH = MODELS_DIR / "customer_recommendations.csv"
 CUSTOMER_SEGMENTS_PATH = MODELS_DIR / "customer_segments.csv"
+LIGHTGBM_FEATURE_IMPORTANCE_PATH = MODELS_DIR / "lightgbm_feature_importance.csv"
+LIGHTGBM_METRICS_PATH = MODELS_DIR / "lightgbm_metrics.json"
 
 LOW_CHURN_MAX = 0.20
 HIGH_CHURN_MIN = 0.50
 DEFAULT_MARGIN_RATE = 0.40
 DEFAULT_OFFER_COST = 5.00
 DEFAULT_EXPECTED_UPLIFT = 0.10
+FEATURE_WINDOW_DAYS = 90
+TARGET_WINDOW_DAYS = 90
+
+RECOMMENDATION_MATRIX = {
+    ('Champions', 'Low'): [
+        "VIP loyalty rewards program",
+        "Exclusive early access to new products",
+        "Personalized thank you communications",
+        "Premium customer support"
+    ],
+    ('Champions', 'Moderate'): [
+        "Upsell premium products",
+        "Cross-sell complementary items",
+        "Referral program incentives",
+        "Exclusive member events"
+    ],
+    ('Champions', 'High'): [
+        "Immediate retention campaign",
+        "Personal concierge service",
+        "Custom product bundles",
+        "Loyalty program reactivation"
+    ],
+    ('Loyal', 'Low'): [
+        "Loyalty program rewards",
+        "Personalized product recommendations",
+        "Birthday/anniversary specials",
+        "Exclusive member discounts"
+    ],
+    ('Loyal', 'Moderate'): [
+        "Upsell opportunities",
+        "Cross-sell recommendations",
+        "Engagement campaigns",
+        "Loyalty tier upgrades"
+    ],
+    ('Loyal', 'High'): [
+        "Retention incentives",
+        "Personal outreach",
+        "Custom retention packages",
+        "Loyalty program reactivation"
+    ],
+    ('Active', 'Low'): [
+        "Re-engagement campaigns",
+        "Personalized offers",
+        "Product discovery recommendations",
+        "Loyalty program enrollment"
+    ],
+    ('Active', 'Moderate'): [
+        "Upsell campaigns",
+        "Cross-sell opportunities",
+        "Engagement incentives",
+        "Personalized communications"
+    ],
+    ('Active', 'High'): [
+        "Win-back campaigns",
+        "Discounted retention offers",
+        "Personal outreach",
+        "Re-engagement incentives"
+    ],
+    ('Occasional', 'Low'): [
+        "Re-engagement emails",
+        "Special promotional offers",
+        "Product recommendations",
+        "Simplified purchase process"
+    ],
+    ('Occasional', 'Moderate'): [
+        "Promotional campaigns",
+        "Discount incentives",
+        "Cross-sell opportunities",
+        "Engagement building"
+    ],
+    ('Occasional', 'High'): [
+        "Reactivation campaigns",
+        "Deep discount offers",
+        "Personal outreach",
+        "Simplified re-engagement"
+    ],
+    ('Low', 'Low'): [
+        "Basic re-engagement",
+        "Generic promotional offers",
+        "Product awareness campaigns",
+        "Low-cost incentives"
+    ],
+    ('Low', 'Moderate'): [
+        "Targeted promotional offers",
+        "Discount campaigns",
+        "Product recommendations",
+        "Re-engagement incentives"
+    ],
+    ('Low', 'High'): [
+        "Aggressive reactivation",
+        "Deep discount promotions",
+        "Personal outreach",
+        "High-touch re-engagement"
+    ],
+}
 
 
 class CustomerData(BaseModel):
@@ -71,38 +164,19 @@ class CampaignEconomicsRequest(BaseModel):
 
 @app.on_event("startup")
 async def startup_event():
-    """Load the CLV pipeline on startup."""
-    global pipeline
-    try:
-        config_path = Path(__file__).parent.parent / 'config.yaml'
-        pipeline = CLVPipeline(str(config_path))
-        logger.info("CLV pipeline initialized")
-
-        run_pipeline_on_startup = os.getenv(
-            "CLV_API_RUN_PIPELINE_ON_STARTUP",
-            "false"
-        ).lower() in {"1", "true", "yes"}
-        if run_pipeline_on_startup:
-            # Run the pipeline to generate recommendations
-            pipeline.run()
-            logger.info("CLV pipeline executed successfully")
-        else:
-            champion_dir = pipeline._lightgbm_champion_dir()
-            if champion_dir.exists():
-                pipeline.advanced_model.load(str(champion_dir))
-                logger.info("Loaded champion LightGBM model from %s", champion_dir)
-            logger.info(
-                "Skipping pipeline.run() because CLV_API_RUN_PIPELINE_ON_STARTUP is false"
-            )
-    except Exception as e:
-        logger.error(f"Failed to load pipeline: {e}")
-        raise
-
-
-def _ensure_pipeline() -> CLVPipeline:
-    if pipeline is None:
-        raise HTTPException(status_code=500, detail="Pipeline not loaded")
-    return pipeline
+    """Validate artifact availability at startup without importing LightGBM."""
+    required_artifacts = [
+        RFM_SEGMENT_SUMMARY_PATH,
+        LIGHTGBM_PREDICTIONS_PATH,
+        CUSTOMER_RECOMMENDATIONS_PATH,
+        CUSTOMER_SEGMENTS_PATH,
+        LIGHTGBM_FEATURE_IMPORTANCE_PATH,
+        LIGHTGBM_METRICS_PATH,
+    ]
+    missing = [str(path.relative_to(BASE_DIR)) for path in required_artifacts if not path.exists()]
+    if missing:
+        raise RuntimeError(f"Missing required deployment artifacts: {missing}")
+    logger.info("Artifact-only API startup complete")
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -163,16 +237,12 @@ def _records(df: pd.DataFrame) -> List[Dict[str, Any]]:
 
 
 def _lightgbm_predictions_df() -> pd.DataFrame:
-    active_pipeline = _ensure_pipeline()
-    if active_pipeline.lightgbm_predictions is not None:
-        df = active_pipeline.lightgbm_predictions.copy()
-    elif LIGHTGBM_PREDICTIONS_PATH.exists():
-        df = pd.read_csv(LIGHTGBM_PREDICTIONS_PATH)
-    else:
+    if not LIGHTGBM_PREDICTIONS_PATH.exists():
         raise HTTPException(
             status_code=500,
             detail="LightGBM predictions are not available"
         )
+    df = pd.read_csv(LIGHTGBM_PREDICTIONS_PATH)
     df["CustomerID"] = df["CustomerID"].astype(str)
     df["value_at_risk_90d"] = (
         df["lightgbm_clv_90d"] * df["lightgbm_churn_90d_probability"]
@@ -182,16 +252,12 @@ def _lightgbm_predictions_df() -> pd.DataFrame:
 
 
 def _recommendations_df() -> pd.DataFrame:
-    active_pipeline = _ensure_pipeline()
-    if active_pipeline.recommendations is not None:
-        df = active_pipeline.recommendations.copy()
-    elif CUSTOMER_RECOMMENDATIONS_PATH.exists():
-        df = pd.read_csv(CUSTOMER_RECOMMENDATIONS_PATH)
-    else:
+    if not CUSTOMER_RECOMMENDATIONS_PATH.exists():
         raise HTTPException(
             status_code=500,
             detail="Customer recommendations are not available"
         )
+    df = pd.read_csv(CUSTOMER_RECOMMENDATIONS_PATH)
     df["CustomerID"] = df["CustomerID"].astype(str)
     df["value_at_risk"] = df["CLV"] * df["churn_probability"]
     df["Recommendations"] = df["Recommendations"].apply(_parse_recommendations)
@@ -212,18 +278,51 @@ def _rfm_summary_df() -> pd.DataFrame:
 
 
 def _customer_segments_df() -> pd.DataFrame:
-    active_pipeline = _ensure_pipeline()
-    if active_pipeline.customer_segments is not None:
-        df = active_pipeline.customer_segments.reset_index().copy()
-    elif CUSTOMER_SEGMENTS_PATH.exists():
-        df = pd.read_csv(CUSTOMER_SEGMENTS_PATH)
-    else:
+    if not CUSTOMER_SEGMENTS_PATH.exists():
         raise HTTPException(
             status_code=500,
             detail="Customer RFM segments are not available"
         )
+    df = pd.read_csv(CUSTOMER_SEGMENTS_PATH)
     df["CustomerID"] = df["CustomerID"].astype(str)
     return df
+
+
+def _recommendations_for_segment(clv_segment: str, churn_risk: str) -> List[str]:
+    return RECOMMENDATION_MATRIX.get(
+        (clv_segment, churn_risk),
+        [
+            "General re-engagement campaign",
+            "Product awareness communications",
+            "Basic promotional offers",
+        ],
+    )
+
+
+def _segment_summary(df: pd.DataFrame) -> pd.DataFrame:
+    summary = df.groupby(['CLV_Segment', 'Churn_Risk']).agg({
+        'CustomerID': 'count',
+        'CLV': ['mean', 'median', 'sum'],
+        'churn_probability': 'mean'
+    }).round(2)
+    summary.columns = ['_'.join(col).strip() for col in summary.columns.values]
+    return summary.rename(columns={
+        'CustomerID_count': 'customer_count',
+        'CLV_mean': 'avg_clv',
+        'CLV_median': 'median_clv',
+        'CLV_sum': 'total_clv',
+        'churn_probability_mean': 'avg_churn_risk'
+    })
+
+
+def _lightgbm_metrics() -> Dict[str, Any]:
+    if not LIGHTGBM_METRICS_PATH.exists():
+        raise HTTPException(
+            status_code=500,
+            detail="LightGBM metrics are not available"
+        )
+    with LIGHTGBM_METRICS_PATH.open() as f:
+        return json.load(f)
 
 
 @app.get("/")
@@ -246,8 +345,8 @@ async def get_decision_rules():
             "Non-contractual churn is inferred as purchase inactivity rather "
             "than a known cancellation event."
         ),
-        "target_window_days": _ensure_pipeline().config.get("target_window_days", 90),
-        "feature_window_days": _ensure_pipeline().config.get("feature_window_days", 90),
+        "target_window_days": TARGET_WINDOW_DAYS,
+        "feature_window_days": FEATURE_WINDOW_DAYS,
         "churn_risk_bands": {
             "Low": f"churn_probability <= {LOW_CHURN_MAX}",
             "Moderate": f"{LOW_CHURN_MAX} < churn_probability <= {HIGH_CHURN_MIN}",
@@ -339,156 +438,57 @@ async def get_business_summary():
 @app.post("/predict/clv")
 async def predict_clv(request: PredictionRequest):
     """
-    Predict CLV for given customers.
+    Return saved CLV/churn predictions for customers in the artifact snapshot.
 
-    For known customers, the API uses the fitted model features created during
-    startup. For new customers, provide customer_age (T) and monetary_value
-    along with frequency and recency.
+    Live LightGBM inference is intentionally disabled in the FastAPI Cloud
+    artifact-only deployment because the managed runtime does not provide the
+    native OpenMP library required by LightGBM.
     """
-    active_pipeline = _ensure_pipeline()
-
     try:
-        feature_rows = []
-        lightgbm_feature_rows = []
-        trained_customer_lookup = {}
-        if active_pipeline.summary_data is not None:
-            trained_customer_lookup = {
-                str(customer_id): customer_id
-                for customer_id in active_pipeline.summary_data.index
-            }
-        lightgbm_customer_lookup = {}
-        if active_pipeline.lightgbm_features is not None:
-            lightgbm_customer_lookup = {
-                str(customer_id): customer_id
-                for customer_id in active_pipeline.lightgbm_features.index
-            }
-
-        for customer in request.customers:
-            trained_customer_id = trained_customer_lookup.get(customer.customer_id)
-            if trained_customer_id is not None:
-                customer_features = active_pipeline.summary_data.loc[trained_customer_id]
-            else:
-                if customer.customer_age is None and request.model_type in ('baseline', 'both'):
-                    raise HTTPException(
-                        status_code=422,
-                        detail=(
-                            "customer_age is required for customers that are not "
-                            "already present in the trained pipeline data"
-                        )
-                    )
-
-                customer_features = pd.Series({
-                    'frequency': customer.frequency,
-                    'recency': customer.recency,
-                    'T': customer.customer_age if customer.customer_age is not None else 0,
-                    'monetary_value': (
-                        customer.monetary_value
-                        if customer.monetary_value is not None
-                        else customer.monetary
-                    )
-                })
-
-            feature_rows.append({
-                'CustomerID': customer.customer_id,
-                'frequency': float(customer_features['frequency']),
-                'recency': float(customer_features['recency']),
-                'T': float(customer_features['T']),
-                'monetary_value': float(customer_features['monetary_value'])
-            })
-
-            lightgbm_customer_id = lightgbm_customer_lookup.get(customer.customer_id)
-            if lightgbm_customer_id is not None:
-                lightgbm_features = active_pipeline.lightgbm_features.loc[lightgbm_customer_id]
-            else:
-                lightgbm_features = pd.Series({
-                    'frequency': customer.frequency,
-                    'recency': customer.recency,
-                    'avg_basket_size_90d': 0,
-                    'orders_last_7d': 0,
-                    'orders_last_30d': customer.frequency,
-                    'orders_last_90d': customer.frequency,
-                    'spend_last_30d': customer.monetary,
-                    'spend_last_90d': customer.monetary,
-                    'unique_products_90d': 0,
-                    'customer_tenure_days': (
-                        customer.customer_age
-                        if customer.customer_age is not None
-                        else 0
-                    ),
-                    'spend_trend_30d_vs_90d': 1 if customer.monetary > 0 else 0,
-                    'orders_trend_30d_vs_90d': 1 if customer.frequency > 0 else 0,
-                    'frequency_recency_ratio': customer.frequency / (customer.recency + 1),
-                })
-
-            lightgbm_feature_rows.append({
-                'CustomerID': customer.customer_id,
-                'frequency': float(lightgbm_features['frequency']),
-                'recency': float(lightgbm_features['recency']),
-                'avg_basket_size_90d': float(lightgbm_features['avg_basket_size_90d']),
-                'orders_last_7d': float(lightgbm_features['orders_last_7d']),
-                'orders_last_30d': float(lightgbm_features['orders_last_30d']),
-                'orders_last_90d': float(lightgbm_features['orders_last_90d']),
-                'spend_last_30d': float(lightgbm_features['spend_last_30d']),
-                'spend_last_90d': float(lightgbm_features['spend_last_90d']),
-                'unique_products_90d': float(lightgbm_features['unique_products_90d']),
-                'customer_tenure_days': float(lightgbm_features['customer_tenure_days']),
-                'spend_trend_30d_vs_90d': float(lightgbm_features['spend_trend_30d_vs_90d']),
-                'orders_trend_30d_vs_90d': float(lightgbm_features['orders_trend_30d_vs_90d']),
-                'frequency_recency_ratio': float(lightgbm_features['frequency_recency_ratio']),
-            })
-
-        feature_df = pd.DataFrame(feature_rows).set_index('CustomerID')
-        lightgbm_feature_df = pd.DataFrame(lightgbm_feature_rows).set_index('CustomerID')
-        if request.model_type in ('lightgbm', 'both') and not active_pipeline.advanced_model.is_fitted:
+        if request.model_type in ('baseline', 'both'):
             raise HTTPException(
                 status_code=503,
-                detail="LightGBM model is not available. Use model_type='baseline'."
+                detail=(
+                    "Baseline/live model inference is not available in the "
+                    "artifact-only cloud deployment."
+                )
             )
 
+        saved_predictions = _lightgbm_predictions_df().set_index("CustomerID")
         predictions = []
-        baseline_predictions = None
-        lightgbm_predictions = None
+        missing_customer_ids = []
+        for customer in request.customers:
+            customer_id = str(customer.customer_id)
+            if customer_id not in saved_predictions.index:
+                missing_customer_ids.append(customer_id)
+                continue
 
-        if request.model_type in ('baseline', 'both'):
-            baseline_predictions = (
-                active_pipeline.predict_customer_features(feature_df)
-                .set_index('CustomerID')
-            )
-
-        if request.model_type in ('lightgbm', 'both'):
-            lightgbm_predictions = (
-                active_pipeline.predict_customer_features_lightgbm(lightgbm_feature_df)
-                .set_index('CustomerID')
-            )
-
-        for customer_id in feature_df.index:
-            prediction = {'customer_id': str(customer_id)}
-
-            if lightgbm_predictions is not None:
-                lightgbm_row = lightgbm_predictions.loc[customer_id]
-                churn_probability = _safe_float(lightgbm_row['lightgbm_churn_90d_probability'])
-                clv_90d = _safe_float(lightgbm_row['lightgbm_clv_90d'])
-                prediction['lightgbm'] = {
-                    'predicted_clv_90d': clv_90d,
-                    'churn_90d_probability': churn_probability,
-                    'churn_risk_band': _churn_risk_band(churn_probability),
-                    'value_at_risk_90d': _value_at_risk(clv_90d, churn_probability),
+            row = saved_predictions.loc[customer_id]
+            churn_probability = _safe_float(row['lightgbm_churn_90d_probability'])
+            clv_90d = _safe_float(row['lightgbm_clv_90d'])
+            predictions.append({
+                "customer_id": customer_id,
+                "lightgbm": {
+                    "predicted_clv_90d": clv_90d,
+                    "churn_90d_probability": churn_probability,
+                    "churn_risk_band": _churn_risk_band(churn_probability),
+                    "value_at_risk_90d": _value_at_risk(clv_90d, churn_probability),
+                    "source": "saved_artifact_snapshot",
                 }
+            })
 
-            if baseline_predictions is not None:
-                baseline_row = baseline_predictions.loc[customer_id]
-                churn_probability = _safe_float(baseline_row['churn_probability'])
-                clv = _safe_float(baseline_row['CLV'])
-                prediction['baseline'] = {
-                    'predicted_purchases': _safe_float(baseline_row['predicted_purchases']),
-                    'predicted_monetary': _safe_float(baseline_row['predicted_monetary']),
-                    'predicted_clv': clv,
-                    'churn_probability': churn_probability,
-                    'churn_risk_band': _churn_risk_band(churn_probability),
-                    'value_at_risk': _value_at_risk(clv, churn_probability),
-                }
-
-            predictions.append(prediction)
+        if missing_customer_ids:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "message": (
+                        "Saved prediction artifacts do not contain every requested "
+                        "customer. Live inference for unseen customers is disabled "
+                        "in this artifact-only deployment."
+                    ),
+                    "missing_customer_ids": missing_customer_ids,
+                },
+            )
 
         return {"predictions": predictions}
 
@@ -502,23 +502,15 @@ async def predict_clv(request: PredictionRequest):
 @app.post("/recommend")
 async def get_recommendations(request: RecommendationRequest):
     """Get recommendations for a customer."""
-    if pipeline is None or pipeline.recommender is None:
-        raise HTTPException(status_code=500, detail="Recommender not loaded")
-
     try:
-        # Get recommendations based on segment
-        recommendations = pipeline.recommender._get_recommendations_for_customer(
-            pd.Series({
-                'CLV_Segment': request.clv_segment,
-                'Churn_Risk': request.churn_risk
-            })
-        )
-
         return {
             "customer_id": request.customer_id,
             "clv_segment": request.clv_segment,
             "churn_risk": request.churn_risk,
-            "recommendations": recommendations
+            "recommendations": _recommendations_for_segment(
+                request.clv_segment,
+                request.churn_risk,
+            )
         }
 
     except Exception as e:
@@ -530,9 +522,8 @@ async def get_recommendations(request: RecommendationRequest):
 async def get_segment_summary():
     """Get summary of customer segments."""
     try:
-        active_pipeline = _ensure_pipeline()
         recommendations = _recommendations_df()
-        summary = active_pipeline.recommender.get_segment_summary(recommendations)
+        summary = _segment_summary(recommendations)
         return summary.reset_index().to_dict('records')
 
     except Exception as e:
@@ -737,12 +728,15 @@ async def estimate_campaign_roi(request: CampaignEconomicsRequest):
 @app.get("/models/lightgbm/feature-importance")
 async def get_lightgbm_feature_importance():
     """Get LightGBM feature importance for CLV and churn models."""
-    active_pipeline = _ensure_pipeline()
-    if not active_pipeline.advanced_model.is_fitted:
-        raise HTTPException(status_code=500, detail="LightGBM model not available")
-
     try:
-        return active_pipeline.advanced_model.get_feature_importance().to_dict('records')
+        if not LIGHTGBM_FEATURE_IMPORTANCE_PATH.exists():
+            raise HTTPException(
+                status_code=500,
+                detail="LightGBM feature importance artifact is not available"
+            )
+        return pd.read_csv(LIGHTGBM_FEATURE_IMPORTANCE_PATH).to_dict('records')
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Feature importance query failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -751,12 +745,13 @@ async def get_lightgbm_feature_importance():
 @app.get("/models/lightgbm/metrics")
 async def get_lightgbm_metrics():
     """Get current LightGBM model metrics."""
-    active_pipeline = _ensure_pipeline()
-    if not active_pipeline.advanced_model.metrics:
-        raise HTTPException(status_code=500, detail="LightGBM metrics not available")
+    metadata = _lightgbm_metrics()
 
     return {
-        "feature_window_days": active_pipeline.config.get('feature_window_days', 90),
-        "target_window_days": active_pipeline.config.get('target_window_days', 90),
-        "metrics": active_pipeline.advanced_model.metrics,
+        "model_version": metadata.get("model_version"),
+        "training_snapshot_date": metadata.get("training_snapshot_date"),
+        "validation_snapshot_date": metadata.get("validation_snapshot_date"),
+        "feature_window_days": metadata.get('feature_window_days', FEATURE_WINDOW_DAYS),
+        "target_window_days": metadata.get('target_window_days', TARGET_WINDOW_DAYS),
+        "metrics": metadata.get("metrics", {}),
     }
