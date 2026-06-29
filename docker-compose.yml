@@ -1,0 +1,19 @@
+services:
+  clv-api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - CONFIG_PATH=config.yaml
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./models:/app/models
+      - ./mlruns:/app/mlruns
+      - ./logs:/app/logs
+      - ./config.yaml:/app/config.yaml
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health', timeout=5).raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s

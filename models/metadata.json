@@ -1,0 +1,48 @@
+{
+  "model_version": "20260528203026",
+  "training_snapshot_date": "2011-04-01",
+  "validation_snapshot_date": "2011-06-30",
+  "feature_window_days": 90,
+  "target_window_days": 90,
+  "feature_columns": [
+    "frequency",
+    "recency",
+    "avg_basket_size_90d",
+    "orders_last_7d",
+    "orders_last_30d",
+    "orders_last_90d",
+    "spend_last_30d",
+    "spend_last_90d",
+    "unique_products_90d",
+    "customer_tenure_days",
+    "spend_trend_30d_vs_90d",
+    "orders_trend_30d_vs_90d",
+    "frequency_recency_ratio"
+  ],
+  "feature_selection_rules": {
+    "kept": [
+      "High-importance logical recency/frequency/spend features",
+      "Trend features that compare recent 30-day behavior with 90-day behavior",
+      "Tenure, basket-size, and product-diversity features"
+    ],
+    "removed": [
+      "total_spend removed as duplicate alias for spend_last_90d",
+      "monetary_value and avg_order_value removed because they duplicate average spend signals",
+      "monetary_log removed because it duplicated the spend magnitude signal"
+    ],
+    "leakage_checks": [
+      "Features use InvoiceDate <= snapshot_date",
+      "Targets use snapshot_date < InvoiceDate <= snapshot_date + target_window_days"
+    ]
+  },
+  "metrics": {
+    "clv_mae": 585.3367602476039,
+    "clv_rmse": 2256.4371337452135,
+    "clv_r2": 0.522067553741115,
+    "churn_roc_auc": 0.7184848663007285,
+    "churn_pr_auc": 0.6063607916640248,
+    "churn_precision": 0.6412371134020619,
+    "churn_recall": 0.38729763387297633,
+    "churn_f1": 0.4829192546583851
+  }
+}

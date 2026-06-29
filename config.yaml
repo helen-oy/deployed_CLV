@@ -1,0 +1,45 @@
+# CLV Prediction Pipeline Configuration
+
+# Data source configuration
+data_source: csv  # Options: 'csv' or 'sql'
+csv_path: customer_segmentation.csv
+
+# SQL configuration (if using SQL/Azure Postgres)
+# sql_connection: "postgresql://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}?sslmode=require"
+# sql_query: > 
+#   SELECT
+#       customerid AS "CustomerID",
+#       invoiceno AS "InvoiceNo",
+#       stockcode AS "StockCode",
+#       description AS "Description",
+#       quantity AS "Quantity",
+#       unitprice AS "UnitPrice",
+#       invoicedate AS "InvoiceDate",
+#       country AS "Country"
+#   FROM customers
+
+# Date configuration
+cutoff_date: '2011-06-30'
+calibration_end: '2011-06-30'
+holdout_end: '2011-12-31'
+
+# Model configuration
+penalizer_coef: 0.0
+time_periods: 90  # Days for CLV prediction
+discount_rate: 0.01  # Annual discount rate
+
+# General settings
+random_state: 42
+use_holdout: true
+use_lightgbm: true
+load_champion_lightgbm: true
+force_train_lightgbm_challenger: false
+feature_window_days: 90
+target_window_days: 90
+mlflow_tracking_uri: file:./mlruns
+mlflow_experiment_name: clv-lightgbm
+model_registry_dir: models/lightgbm_registry
+
+# Output directories
+output_dir: models/
+plots_dir: models/plots/

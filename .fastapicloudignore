@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+notebooks/
+logs/
+mlruns/
+clv.tar
+local_backup.sql
+retention_image.webp
+src/dashboard_app.py
+tests/
+docs/
