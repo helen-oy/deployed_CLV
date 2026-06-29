@@ -28,6 +28,14 @@ pipeline = CLVPipeline()
 pipeline.run()
 ```
 
+## Live Dashboard
+
+View the deployed customer retention dashboard:
+
+```text
+https://deployedclv-pa6zwcq9vmfyyow3cagnfx.streamlit.app/
+```
+
 ## Docker API
 
 Run the API locally:
