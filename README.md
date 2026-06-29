@@ -60,10 +60,11 @@ CLV, inactivity risk, RFM health, and retention economics:
 - `POST /business/campaign-roi`: campaign economics using margin rate, offer
   cost, expected uplift, and either selected customers or top priority customers.
 
-For FastAPI Cloud, the API runs in artifact-only mode. It reads the saved CSV
-and JSON files in `models/` and does not import the training pipeline or
-LightGBM at startup. This avoids native runtime dependencies such as OpenMP
-`libgomp` that are needed only for live model inference/training.
+For FastAPI Cloud, the API runs in artifact-only mode. It reads packaged CSV
+and JSON serving artifacts from `src/model_artifacts/`, with `models/` kept as
+a local fallback, and does not import the training pipeline or LightGBM at
+startup. This avoids native runtime dependencies such as OpenMP `libgomp` that
+are needed only for live model inference/training.
 
 The `POST /predict/clv` endpoint returns saved LightGBM predictions for
 customers present in `models/lightgbm_predictions.csv`. Live inference for new

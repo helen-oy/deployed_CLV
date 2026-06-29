@@ -21,12 +21,22 @@ app = FastAPI(
 
 BASE_DIR = Path(__file__).parent.parent
 MODELS_DIR = BASE_DIR / "models"
-RFM_SEGMENT_SUMMARY_PATH = MODELS_DIR / "current_state_segment_summary.csv"
-LIGHTGBM_PREDICTIONS_PATH = MODELS_DIR / "lightgbm_predictions.csv"
-CUSTOMER_RECOMMENDATIONS_PATH = MODELS_DIR / "customer_recommendations.csv"
-CUSTOMER_SEGMENTS_PATH = MODELS_DIR / "customer_segments.csv"
-LIGHTGBM_FEATURE_IMPORTANCE_PATH = MODELS_DIR / "lightgbm_feature_importance.csv"
-LIGHTGBM_METRICS_PATH = MODELS_DIR / "lightgbm_metrics.json"
+PACKAGED_ARTIFACTS_DIR = Path(__file__).parent / "model_artifacts"
+
+
+def _artifact_path(filename: str) -> Path:
+    packaged_path = PACKAGED_ARTIFACTS_DIR / filename
+    if packaged_path.exists():
+        return packaged_path
+    return MODELS_DIR / filename
+
+
+RFM_SEGMENT_SUMMARY_PATH = _artifact_path("current_state_segment_summary.csv")
+LIGHTGBM_PREDICTIONS_PATH = _artifact_path("lightgbm_predictions.csv")
+CUSTOMER_RECOMMENDATIONS_PATH = _artifact_path("customer_recommendations.csv")
+CUSTOMER_SEGMENTS_PATH = _artifact_path("customer_segments.csv")
+LIGHTGBM_FEATURE_IMPORTANCE_PATH = _artifact_path("lightgbm_feature_importance.csv")
+LIGHTGBM_METRICS_PATH = _artifact_path("lightgbm_metrics.json")
 
 LOW_CHURN_MAX = 0.20
 HIGH_CHURN_MIN = 0.50

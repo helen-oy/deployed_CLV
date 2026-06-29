@@ -42,6 +42,9 @@ dev = [
 where = ["."]
 include = ["src*"]
 
+[tool.setuptools.package-data]
+"src.model_artifacts" = ["*.csv", "*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
