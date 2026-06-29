@@ -14,8 +14,8 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="CLV Prediction API",
-    description="Customer Lifetime Value prediction and recommendation service",
+    title="customer-ltv-and-retention-intelligence-api",
+    description="CLV, churn risk, RFM segmentation, retention prioritisation, and campaign ROI service",
     version="1.0.0"
 )
 
